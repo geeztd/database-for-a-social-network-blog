@@ -134,38 +134,54 @@ EXCEPTION
     RETURN NULL;
 END;
 
-CREATE OR REPLACE FUNCTION import_json_roles (
-  p_json_data CLOB
-) RETURN VARCHAR2
+CREATE OR REPLACE FUNCTION import_json_roles RETURN VARCHAR2
 IS
   l_message VARCHAR2(4000);
+  l_file UTL_FILE.FILE_TYPE;
+  l_buffer CLOB;
+  l_json_data CLOB;
 BEGIN
+  l_file := UTL_FILE.FOPEN('JSON_OUTPUT_DIR', 'roles.json', 'r', 32767);
+  DBMS_LOB.CREATETEMPORARY(l_json_data, TRUE);
+  LOOP
+    BEGIN
+      UTL_FILE.GET_LINE(l_file, l_buffer);
+      DBMS_LOB.WRITEAPPEND(l_json_data, LENGTH(l_buffer), l_buffer);
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        EXIT;
+    END;
+  END LOOP;
+  
+  UTL_FILE.FCLOSE(l_file);
   FOR rec IN (
     SELECT *
     FROM JSON_TABLE(
-      p_json_data,
+      l_json_data,
       '$[*]'
       COLUMNS (
-        name NVARCHAR2(50) PATH '$.Name'
+        roleId NUMBER PATH '$.roleId',
+        name VARCHAR2(50) PATH '$.name'
       )
     )
   ) LOOP
-    INSERT INTO Role_Table (Name) VALUES (rec.name);
+    INSERT INTO Role_Table (role_id, Name) VALUES (rec.roleId, rec.name);
   END LOOP;
+  
   COMMIT;
   l_message := 'Данные JSON успешно импортированы.';
   DBMS_OUTPUT.PUT_LINE(l_message);
   RETURN l_message;
 EXCEPTION
   WHEN OTHERS THEN
-    l_message := 'Ошибка при импорте JSON: ' || SQLERRM;
-    DBMS_OUTPUT.PUT_LINE(l_message);
-    RETURN l_message;
+  DBMS_OUTPUT.PUT_LINE('Ошибка при экспорте JSON: ' || SQLERRM);
+    RETURN NULL;
 END;
 
 CREATE OR REPLACE FUNCTION export_json_roles RETURN CLOB
 IS
   l_json_data CLOB;
+  l_file UTL_FILE.FILE_TYPE;
 BEGIN
   SELECT JSON_ARRAYAGG(
     JSON_OBJECT(
@@ -175,6 +191,9 @@ BEGIN
   )
   INTO l_json_data
   FROM Role_Table;
+    l_file := UTL_FILE.FOPEN('JSON_OUTPUT_DIR', 'roles.json', 'w', 32767);
+    UTL_FILE.PUT_LINE(l_file, l_json_data);
+    UTL_FILE.FCLOSE(l_file);
 
   DBMS_OUTPUT.PUT_LINE('Данные экспортированы в JSON.');
   RETURN l_json_data;
